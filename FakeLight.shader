@@ -1,20 +1,16 @@
 // Made with Amplify Shader Editor v1.9.2.2
 // Available at the Unity Asset Store - http://u3d.as/y3X 
-Shader "Glas"
+Shader "FakeLight"
 {
 	Properties
 	{
 		[HideInInspector] _AlphaCutoff("Alpha Cutoff ", Range(0, 1)) = 0.5
 		[HideInInspector] _EmissionColor("Emission Color", Color) = (1,1,1,1)
+		_f("f", Float) = 0
+		[HDR]_Color0("Color 0", Color) = (0,0,0,0)
 		_Noise("Noise", 2D) = "white" {}
-		_Strength("Strength", Float) = 0.01
-		_TextureSample0("Texture Sample 0", 2D) = "white" {}
-		_TextureStrength("TextureStrength", Range( 0 , 1)) = 1
-		_Color("Color", Color) = (1,1,1,0)
-		_Emis("Emis", Float) = 1
-		_DistanceScaling("DistanceScaling", Range( 0 , 1)) = 1
-		_ColorFresnel("ColorFresnel", Range( 0 , 1)) = 0
-		[HideInInspector] _texcoord( "", 2D ) = "white" {}
+		_Scroll("Scroll", Float) = 10
+		_MinAlpha("MinAlpha", Range( 0 , 1)) = 1
 
 
 		//_TessPhongStrength( "Tess Phong Strength", Range( 0, 1 ) ) = 0.5
@@ -182,7 +178,6 @@ Shader "Glas"
 			#define ASE_FOG 1
 			#define _SURFACE_TYPE_TRANSPARENT 1
 			#define ASE_SRP_VERSION 140008
-			#define REQUIRE_OPAQUE_TEXTURE 1
 			#define REQUIRE_DEPTH_TEXTURE 1
 
 
@@ -220,15 +215,13 @@ Shader "Glas"
             #endif
 
 			#define ASE_NEEDS_VERT_POSITION
-			#define ASE_NEEDS_FRAG_WORLD_POSITION
-			#define ASE_NEEDS_VERT_NORMAL
 
 
 			struct VertexInput
 			{
 				float4 positionOS : POSITION;
 				float3 normalOS : NORMAL;
-				float4 ase_texcoord : TEXCOORD0;
+				
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 			};
 
@@ -246,20 +239,15 @@ Shader "Glas"
 				#endif
 				float4 ase_texcoord3 : TEXCOORD3;
 				float4 ase_texcoord4 : TEXCOORD4;
-				float4 ase_texcoord5 : TEXCOORD5;
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			CBUFFER_START(UnityPerMaterial)
-			float4 _Color;
-			float4 _Noise_ST;
-			float4 _TextureSample0_ST;
-			float _Strength;
-			float _DistanceScaling;
-			float _TextureStrength;
-			float _ColorFresnel;
-			float _Emis;
+			float4 _Color0;
+			float _f;
+			float _Scroll;
+			float _MinAlpha;
 			#ifdef ASE_TESSELLATION
 				float _TessPhongStrength;
 				float _TessValue;
@@ -270,12 +258,29 @@ Shader "Glas"
 			#endif
 			CBUFFER_END
 
-			sampler2D _Noise;
 			uniform float4 _CameraDepthTexture_TexelSize;
-			sampler2D _TextureSample0;
+			sampler2D _Noise;
 
 
+			float2 UnStereo( float2 UV )
+			{
+				#if UNITY_SINGLE_PASS_STEREO
+				float4 scaleOffset = unity_StereoScaleOffset[ unity_StereoEyeIndex ];
+				UV.xy = (UV.xy - scaleOffset.zw) / scaleOffset.xy;
+				#endif
+				return UV;
+			}
 			
+			float3 InvertDepthDirURP75_g1( float3 In )
+			{
+				float3 result = In;
+				#if !defined(ASE_SRP_VERSION) || ASE_SRP_VERSION <= 70301 || ASE_SRP_VERSION == 70503 || ASE_SRP_VERSION == 70600 || ASE_SRP_VERSION == 70700 || ASE_SRP_VERSION == 70701 || ASE_SRP_VERSION >= 80301
+				result *= float3(1,1,-1);
+				#endif
+				return result;
+			}
+			
+
 			VertexOutput VertexFunction( VertexInput v  )
 			{
 				VertexOutput o = (VertexOutput)0;
@@ -283,20 +288,16 @@ Shader "Glas"
 				UNITY_TRANSFER_INSTANCE_ID(v, o);
 				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
-				float3 objectToViewPos = TransformWorldToView(TransformObjectToWorld(v.positionOS.xyz));
-				float eyeDepth = -objectToViewPos.z;
-				o.ase_texcoord3.z = eyeDepth;
 				float4 ase_clipPos = TransformObjectToHClip((v.positionOS).xyz);
 				float4 screenPos = ComputeScreenPos(ase_clipPos);
-				o.ase_texcoord4 = screenPos;
-				float3 ase_worldNormal = TransformObjectToWorldNormal(v.normalOS);
-				o.ase_texcoord5.xyz = ase_worldNormal;
+				o.ase_texcoord3 = screenPos;
+				float3 objectToViewPos = TransformWorldToView(TransformObjectToWorld(v.positionOS.xyz));
+				float eyeDepth = -objectToViewPos.z;
+				o.ase_texcoord4.x = eyeDepth;
 				
-				o.ase_texcoord3.xy = v.ase_texcoord.xy;
 				
 				//setting value to unused interpolator channels and avoid initialization warnings
-				o.ase_texcoord3.w = 0;
-				o.ase_texcoord5.w = 0;
+				o.ase_texcoord4.yzw = 0;
 
 				#ifdef ASE_ABSOLUTE_VERTEX_POS
 					float3 defaultVertexValue = v.positionOS.xyz;
@@ -342,8 +343,7 @@ Shader "Glas"
 			{
 				float4 vertex : INTERNALTESSPOS;
 				float3 normalOS : NORMAL;
-				float4 ase_texcoord : TEXCOORD0;
-
+				
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 			};
 
@@ -360,7 +360,7 @@ Shader "Glas"
 				UNITY_TRANSFER_INSTANCE_ID(v, o);
 				o.vertex = v.positionOS;
 				o.normalOS = v.normalOS;
-				o.ase_texcoord = v.ase_texcoord;
+				
 				return o;
 			}
 
@@ -399,7 +399,7 @@ Shader "Glas"
 				VertexInput o = (VertexInput) 0;
 				o.positionOS = patch[0].vertex * bary.x + patch[1].vertex * bary.y + patch[2].vertex * bary.z;
 				o.normalOS = patch[0].normalOS * bary.x + patch[1].normalOS * bary.y + patch[2].normalOS * bary.z;
-				o.ase_texcoord = patch[0].ase_texcoord * bary.x + patch[1].ase_texcoord * bary.y + patch[2].ase_texcoord * bary.z;
+				
 				#if defined(ASE_PHONG_TESSELLATION)
 				float3 pp[3];
 				for (int i = 0; i < 3; ++i)
@@ -440,35 +440,36 @@ Shader "Glas"
 					#endif
 				#endif
 
-				float2 uv_Noise = IN.ase_texcoord3.xy * _Noise_ST.xy + _Noise_ST.zw;
-				float eyeDepth = IN.ase_texcoord3.z;
-				float lerpResult48 = lerp( 1.0 , saturate( (1.0 + (eyeDepth - 0.0) * (0.0 - 1.0) / (25.0 - 0.0)) ) , _DistanceScaling);
-				float temp_output_34_0 = ( _Strength * lerpResult48 );
-				float temp_output_23_0 = (-temp_output_34_0 + (tex2D( _Noise, uv_Noise ).r - 0.0) * (temp_output_34_0 - -temp_output_34_0) / (1.0 - 0.0));
-				float3 temp_cast_0 = (temp_output_23_0).xxx;
-				float4 screenPos = IN.ase_texcoord4;
+				float3 objToWorld12 = mul( GetObjectToWorldMatrix(), float4( float3( 0,0,0 ), 1 ) ).xyz;
+				float4 screenPos = IN.ase_texcoord3;
 				float4 ase_screenPosNorm = screenPos / screenPos.w;
 				ase_screenPosNorm.z = ( UNITY_NEAR_CLIP_VALUE >= 0 ) ? ase_screenPosNorm.z : ase_screenPosNorm.z * 0.5 + 0.5;
-				float eyeDepth28_g1 = LinearEyeDepth(SHADERGRAPH_SAMPLE_SCENE_DEPTH( ase_screenPosNorm.xy ),_ZBufferParams);
-				float2 temp_output_20_0_g1 = ( (temp_cast_0).xy * ( 5.0 / max( eyeDepth , 0.1 ) ) * saturate( ( eyeDepth28_g1 - eyeDepth ) ) );
-				float eyeDepth2_g1 = LinearEyeDepth(SHADERGRAPH_SAMPLE_SCENE_DEPTH( ( float4( temp_output_20_0_g1, 0.0 , 0.0 ) + ase_screenPosNorm ).xy ),_ZBufferParams);
-				float2 temp_output_32_0_g1 = (( float4( ( temp_output_20_0_g1 * saturate( ( eyeDepth2_g1 - eyeDepth ) ) ), 0.0 , 0.0 ) + ase_screenPosNorm )).xy;
-				float4 fetchOpaqueVal10 = float4( SHADERGRAPH_SAMPLE_SCENE_COLOR( temp_output_32_0_g1 ), 1.0 );
-				float4 temp_cast_3 = (1.0).xxxx;
-				float2 uv_TextureSample0 = IN.ase_texcoord3.xy * _TextureSample0_ST.xy + _TextureSample0_ST.zw;
-				float4 lerpResult29 = lerp( temp_cast_3 , tex2D( _TextureSample0, uv_TextureSample0 ) , _TextureStrength);
-				float3 ase_worldViewDir = ( _WorldSpaceCameraPos.xyz - WorldPosition );
-				ase_worldViewDir = normalize(ase_worldViewDir);
-				float3 ase_worldNormal = IN.ase_texcoord5.xyz;
-				float fresnelNdotV52 = dot( ase_worldNormal, ase_worldViewDir );
-				float fresnelNode52 = ( 0.0 + 1.0 * pow( 1.0 - fresnelNdotV52, 5.0 ) );
-				float lerpResult53 = lerp( 1.0 , saturate( fresnelNode52 ) , _ColorFresnel);
-				float4 lerpResult39 = lerp( ( fetchOpaqueVal10 * lerpResult29 ) , _Color , ( _Color.a * lerpResult53 ));
+				float3 temp_output_76_0_g1 = ase_screenPosNorm.xyz;
+				float2 UV22_g3 = float4( temp_output_76_0_g1 , 0.0 ).xy;
+				float2 localUnStereo22_g3 = UnStereo( UV22_g3 );
+				float2 break64_g1 = localUnStereo22_g3;
+				float clampDepth69_g1 = SHADERGRAPH_SAMPLE_SCENE_DEPTH( float4( temp_output_76_0_g1 , 0.0 ).xy );
+				#ifdef UNITY_REVERSED_Z
+				float staticSwitch38_g1 = ( 1.0 - clampDepth69_g1 );
+				#else
+				float staticSwitch38_g1 = clampDepth69_g1;
+				#endif
+				float3 appendResult39_g1 = (float3(break64_g1.x , break64_g1.y , staticSwitch38_g1));
+				float4 appendResult42_g1 = (float4((appendResult39_g1*2.0 + -1.0) , 1.0));
+				float4 temp_output_43_0_g1 = mul( unity_CameraInvProjection, appendResult42_g1 );
+				float3 temp_output_46_0_g1 = ( (temp_output_43_0_g1).xyz / (temp_output_43_0_g1).w );
+				float3 In75_g1 = temp_output_46_0_g1;
+				float3 localInvertDepthDirURP75_g1 = InvertDepthDirURP75_g1( In75_g1 );
+				float4 appendResult49_g1 = (float4(localInvertDepthDirURP75_g1 , 1.0));
+				float mulTime28 = _TimeParameters.x * _Scroll;
+				float2 temp_cast_6 = (mulTime28).xx;
+				float temp_output_18_0 = saturate( ( ( 1.0 - ( distance( float4( objToWorld12 , 0.0 ) , mul( unity_CameraToWorld, appendResult49_g1 ) ) * _f ) ) * (_MinAlpha + (tex2D( _Noise, temp_cast_6 ).r - 0.0) * (1.0 - _MinAlpha) / (1.0 - 0.0)) ) );
+				float eyeDepth = IN.ase_texcoord4.x;
 				
 				float3 BakedAlbedo = 0;
 				float3 BakedEmission = 0;
-				float3 Color = ( ( _Color * lerpResult39 ) * _Emis ).rgb;
-				float Alpha = 1;
+				float3 Color = _Color0.rgb;
+				float Alpha = ( ( _Color0.a * ( temp_output_18_0 * temp_output_18_0 * temp_output_18_0 * temp_output_18_0 ) ) * saturate( eyeDepth ) );
 				float AlphaClipThreshold = 0.5;
 				float AlphaClipThresholdShadow = 0.5;
 
@@ -521,6 +522,7 @@ Shader "Glas"
 			#define ASE_FOG 1
 			#define _SURFACE_TYPE_TRANSPARENT 1
 			#define ASE_SRP_VERSION 140008
+			#define REQUIRE_DEPTH_TEXTURE 1
 
 
 			#pragma vertex vert
@@ -539,7 +541,8 @@ Shader "Glas"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl"
             #endif
 
-			
+			#define ASE_NEEDS_VERT_POSITION
+
 
 			struct VertexInput
 			{
@@ -558,20 +561,17 @@ Shader "Glas"
 				#if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR) && defined(ASE_NEEDS_FRAG_SHADOWCOORDS)
 					float4 shadowCoord : TEXCOORD1;
 				#endif
-				
+				float4 ase_texcoord2 : TEXCOORD2;
+				float4 ase_texcoord3 : TEXCOORD3;
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			CBUFFER_START(UnityPerMaterial)
-			float4 _Color;
-			float4 _Noise_ST;
-			float4 _TextureSample0_ST;
-			float _Strength;
-			float _DistanceScaling;
-			float _TextureStrength;
-			float _ColorFresnel;
-			float _Emis;
+			float4 _Color0;
+			float _f;
+			float _Scroll;
+			float _MinAlpha;
 			#ifdef ASE_TESSELLATION
 				float _TessPhongStrength;
 				float _TessValue;
@@ -582,9 +582,29 @@ Shader "Glas"
 			#endif
 			CBUFFER_END
 
+			uniform float4 _CameraDepthTexture_TexelSize;
+			sampler2D _Noise;
+
+
+			float2 UnStereo( float2 UV )
+			{
+				#if UNITY_SINGLE_PASS_STEREO
+				float4 scaleOffset = unity_StereoScaleOffset[ unity_StereoEyeIndex ];
+				UV.xy = (UV.xy - scaleOffset.zw) / scaleOffset.xy;
+				#endif
+				return UV;
+			}
+			
+			float3 InvertDepthDirURP75_g1( float3 In )
+			{
+				float3 result = In;
+				#if !defined(ASE_SRP_VERSION) || ASE_SRP_VERSION <= 70301 || ASE_SRP_VERSION == 70503 || ASE_SRP_VERSION == 70600 || ASE_SRP_VERSION == 70700 || ASE_SRP_VERSION == 70701 || ASE_SRP_VERSION >= 80301
+				result *= float3(1,1,-1);
+				#endif
+				return result;
+			}
 			
 
-			
 			float3 _LightDirection;
 			float3 _LightPosition;
 
@@ -595,7 +615,16 @@ Shader "Glas"
 				UNITY_TRANSFER_INSTANCE_ID(v, o);
 				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO( o );
 
+				float4 ase_clipPos = TransformObjectToHClip((v.positionOS).xyz);
+				float4 screenPos = ComputeScreenPos(ase_clipPos);
+				o.ase_texcoord2 = screenPos;
+				float3 objectToViewPos = TransformWorldToView(TransformObjectToWorld(v.positionOS.xyz));
+				float eyeDepth = -objectToViewPos.z;
+				o.ase_texcoord3.x = eyeDepth;
 				
+				
+				//setting value to unused interpolator channels and avoid initialization warnings
+				o.ase_texcoord3.yzw = 0;
 
 				#ifdef ASE_ABSOLUTE_VERTEX_POS
 					float3 defaultVertexValue = v.positionOS.xyz;
@@ -745,9 +774,34 @@ Shader "Glas"
 					#endif
 				#endif
 
+				float3 objToWorld12 = mul( GetObjectToWorldMatrix(), float4( float3( 0,0,0 ), 1 ) ).xyz;
+				float4 screenPos = IN.ase_texcoord2;
+				float4 ase_screenPosNorm = screenPos / screenPos.w;
+				ase_screenPosNorm.z = ( UNITY_NEAR_CLIP_VALUE >= 0 ) ? ase_screenPosNorm.z : ase_screenPosNorm.z * 0.5 + 0.5;
+				float3 temp_output_76_0_g1 = ase_screenPosNorm.xyz;
+				float2 UV22_g3 = float4( temp_output_76_0_g1 , 0.0 ).xy;
+				float2 localUnStereo22_g3 = UnStereo( UV22_g3 );
+				float2 break64_g1 = localUnStereo22_g3;
+				float clampDepth69_g1 = SHADERGRAPH_SAMPLE_SCENE_DEPTH( float4( temp_output_76_0_g1 , 0.0 ).xy );
+				#ifdef UNITY_REVERSED_Z
+				float staticSwitch38_g1 = ( 1.0 - clampDepth69_g1 );
+				#else
+				float staticSwitch38_g1 = clampDepth69_g1;
+				#endif
+				float3 appendResult39_g1 = (float3(break64_g1.x , break64_g1.y , staticSwitch38_g1));
+				float4 appendResult42_g1 = (float4((appendResult39_g1*2.0 + -1.0) , 1.0));
+				float4 temp_output_43_0_g1 = mul( unity_CameraInvProjection, appendResult42_g1 );
+				float3 temp_output_46_0_g1 = ( (temp_output_43_0_g1).xyz / (temp_output_43_0_g1).w );
+				float3 In75_g1 = temp_output_46_0_g1;
+				float3 localInvertDepthDirURP75_g1 = InvertDepthDirURP75_g1( In75_g1 );
+				float4 appendResult49_g1 = (float4(localInvertDepthDirURP75_g1 , 1.0));
+				float mulTime28 = _TimeParameters.x * _Scroll;
+				float2 temp_cast_5 = (mulTime28).xx;
+				float temp_output_18_0 = saturate( ( ( 1.0 - ( distance( float4( objToWorld12 , 0.0 ) , mul( unity_CameraToWorld, appendResult49_g1 ) ) * _f ) ) * (_MinAlpha + (tex2D( _Noise, temp_cast_5 ).r - 0.0) * (1.0 - _MinAlpha) / (1.0 - 0.0)) ) );
+				float eyeDepth = IN.ase_texcoord3.x;
 				
 
-				float Alpha = 1;
+				float Alpha = ( ( _Color0.a * ( temp_output_18_0 * temp_output_18_0 * temp_output_18_0 * temp_output_18_0 ) ) * saturate( eyeDepth ) );
 				float AlphaClipThreshold = 0.5;
 				float AlphaClipThresholdShadow = 0.5;
 
@@ -786,6 +840,7 @@ Shader "Glas"
 			#define ASE_FOG 1
 			#define _SURFACE_TYPE_TRANSPARENT 1
 			#define ASE_SRP_VERSION 140008
+			#define REQUIRE_DEPTH_TEXTURE 1
 
 
 			#pragma vertex vert
@@ -800,7 +855,8 @@ Shader "Glas"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl"
             #endif
 
-			
+			#define ASE_NEEDS_VERT_POSITION
+
 
 			struct VertexInput
 			{
@@ -819,20 +875,17 @@ Shader "Glas"
 				#if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR) && defined(ASE_NEEDS_FRAG_SHADOWCOORDS)
 				float4 shadowCoord : TEXCOORD1;
 				#endif
-				
+				float4 ase_texcoord2 : TEXCOORD2;
+				float4 ase_texcoord3 : TEXCOORD3;
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			CBUFFER_START(UnityPerMaterial)
-			float4 _Color;
-			float4 _Noise_ST;
-			float4 _TextureSample0_ST;
-			float _Strength;
-			float _DistanceScaling;
-			float _TextureStrength;
-			float _ColorFresnel;
-			float _Emis;
+			float4 _Color0;
+			float _f;
+			float _Scroll;
+			float _MinAlpha;
 			#ifdef ASE_TESSELLATION
 				float _TessPhongStrength;
 				float _TessValue;
@@ -843,9 +896,29 @@ Shader "Glas"
 			#endif
 			CBUFFER_END
 
+			uniform float4 _CameraDepthTexture_TexelSize;
+			sampler2D _Noise;
+
+
+			float2 UnStereo( float2 UV )
+			{
+				#if UNITY_SINGLE_PASS_STEREO
+				float4 scaleOffset = unity_StereoScaleOffset[ unity_StereoEyeIndex ];
+				UV.xy = (UV.xy - scaleOffset.zw) / scaleOffset.xy;
+				#endif
+				return UV;
+			}
+			
+			float3 InvertDepthDirURP75_g1( float3 In )
+			{
+				float3 result = In;
+				#if !defined(ASE_SRP_VERSION) || ASE_SRP_VERSION <= 70301 || ASE_SRP_VERSION == 70503 || ASE_SRP_VERSION == 70600 || ASE_SRP_VERSION == 70700 || ASE_SRP_VERSION == 70701 || ASE_SRP_VERSION >= 80301
+				result *= float3(1,1,-1);
+				#endif
+				return result;
+			}
 			
 
-			
 			VertexOutput VertexFunction( VertexInput v  )
 			{
 				VertexOutput o = (VertexOutput)0;
@@ -853,7 +926,16 @@ Shader "Glas"
 				UNITY_TRANSFER_INSTANCE_ID(v, o);
 				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
+				float4 ase_clipPos = TransformObjectToHClip((v.positionOS).xyz);
+				float4 screenPos = ComputeScreenPos(ase_clipPos);
+				o.ase_texcoord2 = screenPos;
+				float3 objectToViewPos = TransformWorldToView(TransformObjectToWorld(v.positionOS.xyz));
+				float eyeDepth = -objectToViewPos.z;
+				o.ase_texcoord3.x = eyeDepth;
 				
+				
+				//setting value to unused interpolator channels and avoid initialization warnings
+				o.ase_texcoord3.yzw = 0;
 
 				#ifdef ASE_ABSOLUTE_VERTEX_POS
 					float3 defaultVertexValue = v.positionOS.xyz;
@@ -986,9 +1068,34 @@ Shader "Glas"
 					#endif
 				#endif
 
+				float3 objToWorld12 = mul( GetObjectToWorldMatrix(), float4( float3( 0,0,0 ), 1 ) ).xyz;
+				float4 screenPos = IN.ase_texcoord2;
+				float4 ase_screenPosNorm = screenPos / screenPos.w;
+				ase_screenPosNorm.z = ( UNITY_NEAR_CLIP_VALUE >= 0 ) ? ase_screenPosNorm.z : ase_screenPosNorm.z * 0.5 + 0.5;
+				float3 temp_output_76_0_g1 = ase_screenPosNorm.xyz;
+				float2 UV22_g3 = float4( temp_output_76_0_g1 , 0.0 ).xy;
+				float2 localUnStereo22_g3 = UnStereo( UV22_g3 );
+				float2 break64_g1 = localUnStereo22_g3;
+				float clampDepth69_g1 = SHADERGRAPH_SAMPLE_SCENE_DEPTH( float4( temp_output_76_0_g1 , 0.0 ).xy );
+				#ifdef UNITY_REVERSED_Z
+				float staticSwitch38_g1 = ( 1.0 - clampDepth69_g1 );
+				#else
+				float staticSwitch38_g1 = clampDepth69_g1;
+				#endif
+				float3 appendResult39_g1 = (float3(break64_g1.x , break64_g1.y , staticSwitch38_g1));
+				float4 appendResult42_g1 = (float4((appendResult39_g1*2.0 + -1.0) , 1.0));
+				float4 temp_output_43_0_g1 = mul( unity_CameraInvProjection, appendResult42_g1 );
+				float3 temp_output_46_0_g1 = ( (temp_output_43_0_g1).xyz / (temp_output_43_0_g1).w );
+				float3 In75_g1 = temp_output_46_0_g1;
+				float3 localInvertDepthDirURP75_g1 = InvertDepthDirURP75_g1( In75_g1 );
+				float4 appendResult49_g1 = (float4(localInvertDepthDirURP75_g1 , 1.0));
+				float mulTime28 = _TimeParameters.x * _Scroll;
+				float2 temp_cast_5 = (mulTime28).xx;
+				float temp_output_18_0 = saturate( ( ( 1.0 - ( distance( float4( objToWorld12 , 0.0 ) , mul( unity_CameraToWorld, appendResult49_g1 ) ) * _f ) ) * (_MinAlpha + (tex2D( _Noise, temp_cast_5 ).r - 0.0) * (1.0 - _MinAlpha) / (1.0 - 0.0)) ) );
+				float eyeDepth = IN.ase_texcoord3.x;
 				
 
-				float Alpha = 1;
+				float Alpha = ( ( _Color0.a * ( temp_output_18_0 * temp_output_18_0 * temp_output_18_0 * temp_output_18_0 ) ) * saturate( eyeDepth ) );
 				float AlphaClipThreshold = 0.5;
 
 				#ifdef _ALPHATEST_ON
@@ -1018,6 +1125,7 @@ Shader "Glas"
 			#define ASE_FOG 1
 			#define _SURFACE_TYPE_TRANSPARENT 1
 			#define ASE_SRP_VERSION 140008
+			#define REQUIRE_DEPTH_TEXTURE 1
 
 
 			#pragma vertex vert
@@ -1035,7 +1143,8 @@ Shader "Glas"
 			#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderGraphFunctions.hlsl"
 			#include "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/ShaderPass.hlsl"
 
-			
+			#define ASE_NEEDS_VERT_POSITION
+
 
 			struct VertexInput
 			{
@@ -1048,20 +1157,17 @@ Shader "Glas"
 			struct VertexOutput
 			{
 				float4 positionCS : SV_POSITION;
-				
+				float4 ase_texcoord : TEXCOORD0;
+				float4 ase_texcoord1 : TEXCOORD1;
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			CBUFFER_START(UnityPerMaterial)
-			float4 _Color;
-			float4 _Noise_ST;
-			float4 _TextureSample0_ST;
-			float _Strength;
-			float _DistanceScaling;
-			float _TextureStrength;
-			float _ColorFresnel;
-			float _Emis;
+			float4 _Color0;
+			float _f;
+			float _Scroll;
+			float _MinAlpha;
 			#ifdef ASE_TESSELLATION
 				float _TessPhongStrength;
 				float _TessValue;
@@ -1072,9 +1178,29 @@ Shader "Glas"
 			#endif
 			CBUFFER_END
 
+			uniform float4 _CameraDepthTexture_TexelSize;
+			sampler2D _Noise;
+
+
+			float2 UnStereo( float2 UV )
+			{
+				#if UNITY_SINGLE_PASS_STEREO
+				float4 scaleOffset = unity_StereoScaleOffset[ unity_StereoEyeIndex ];
+				UV.xy = (UV.xy - scaleOffset.zw) / scaleOffset.xy;
+				#endif
+				return UV;
+			}
+			
+			float3 InvertDepthDirURP75_g1( float3 In )
+			{
+				float3 result = In;
+				#if !defined(ASE_SRP_VERSION) || ASE_SRP_VERSION <= 70301 || ASE_SRP_VERSION == 70503 || ASE_SRP_VERSION == 70600 || ASE_SRP_VERSION == 70700 || ASE_SRP_VERSION == 70701 || ASE_SRP_VERSION >= 80301
+				result *= float3(1,1,-1);
+				#endif
+				return result;
+			}
 			
 
-			
 			int _ObjectId;
 			int _PassValue;
 
@@ -1093,7 +1219,16 @@ Shader "Glas"
 				UNITY_TRANSFER_INSTANCE_ID(v, o);
 				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
+				float4 ase_clipPos = TransformObjectToHClip((v.positionOS).xyz);
+				float4 screenPos = ComputeScreenPos(ase_clipPos);
+				o.ase_texcoord = screenPos;
+				float3 objectToViewPos = TransformWorldToView(TransformObjectToWorld(v.positionOS.xyz));
+				float eyeDepth = -objectToViewPos.z;
+				o.ase_texcoord1.x = eyeDepth;
 				
+				
+				//setting value to unused interpolator channels and avoid initialization warnings
+				o.ase_texcoord1.yzw = 0;
 
 				#ifdef ASE_ABSOLUTE_VERTEX_POS
 					float3 defaultVertexValue = v.positionOS.xyz;
@@ -1201,9 +1336,34 @@ Shader "Glas"
 			{
 				SurfaceDescription surfaceDescription = (SurfaceDescription)0;
 
+				float3 objToWorld12 = mul( GetObjectToWorldMatrix(), float4( float3( 0,0,0 ), 1 ) ).xyz;
+				float4 screenPos = IN.ase_texcoord;
+				float4 ase_screenPosNorm = screenPos / screenPos.w;
+				ase_screenPosNorm.z = ( UNITY_NEAR_CLIP_VALUE >= 0 ) ? ase_screenPosNorm.z : ase_screenPosNorm.z * 0.5 + 0.5;
+				float3 temp_output_76_0_g1 = ase_screenPosNorm.xyz;
+				float2 UV22_g3 = float4( temp_output_76_0_g1 , 0.0 ).xy;
+				float2 localUnStereo22_g3 = UnStereo( UV22_g3 );
+				float2 break64_g1 = localUnStereo22_g3;
+				float clampDepth69_g1 = SHADERGRAPH_SAMPLE_SCENE_DEPTH( float4( temp_output_76_0_g1 , 0.0 ).xy );
+				#ifdef UNITY_REVERSED_Z
+				float staticSwitch38_g1 = ( 1.0 - clampDepth69_g1 );
+				#else
+				float staticSwitch38_g1 = clampDepth69_g1;
+				#endif
+				float3 appendResult39_g1 = (float3(break64_g1.x , break64_g1.y , staticSwitch38_g1));
+				float4 appendResult42_g1 = (float4((appendResult39_g1*2.0 + -1.0) , 1.0));
+				float4 temp_output_43_0_g1 = mul( unity_CameraInvProjection, appendResult42_g1 );
+				float3 temp_output_46_0_g1 = ( (temp_output_43_0_g1).xyz / (temp_output_43_0_g1).w );
+				float3 In75_g1 = temp_output_46_0_g1;
+				float3 localInvertDepthDirURP75_g1 = InvertDepthDirURP75_g1( In75_g1 );
+				float4 appendResult49_g1 = (float4(localInvertDepthDirURP75_g1 , 1.0));
+				float mulTime28 = _TimeParameters.x * _Scroll;
+				float2 temp_cast_5 = (mulTime28).xx;
+				float temp_output_18_0 = saturate( ( ( 1.0 - ( distance( float4( objToWorld12 , 0.0 ) , mul( unity_CameraToWorld, appendResult49_g1 ) ) * _f ) ) * (_MinAlpha + (tex2D( _Noise, temp_cast_5 ).r - 0.0) * (1.0 - _MinAlpha) / (1.0 - 0.0)) ) );
+				float eyeDepth = IN.ase_texcoord1.x;
 				
 
-				surfaceDescription.Alpha = 1;
+				surfaceDescription.Alpha = ( ( _Color0.a * ( temp_output_18_0 * temp_output_18_0 * temp_output_18_0 * temp_output_18_0 ) ) * saturate( eyeDepth ) );
 				surfaceDescription.AlphaClipThreshold = 0.5;
 
 				#if _ALPHATEST_ON
@@ -1234,6 +1394,7 @@ Shader "Glas"
 			#define ASE_FOG 1
 			#define _SURFACE_TYPE_TRANSPARENT 1
 			#define ASE_SRP_VERSION 140008
+			#define REQUIRE_DEPTH_TEXTURE 1
 
 
 			#pragma vertex vert
@@ -1256,7 +1417,8 @@ Shader "Glas"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl"
             #endif
 
-			
+			#define ASE_NEEDS_VERT_POSITION
+
 
 			struct VertexInput
 			{
@@ -1269,20 +1431,17 @@ Shader "Glas"
 			struct VertexOutput
 			{
 				float4 positionCS : SV_POSITION;
-				
+				float4 ase_texcoord : TEXCOORD0;
+				float4 ase_texcoord1 : TEXCOORD1;
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			CBUFFER_START(UnityPerMaterial)
-			float4 _Color;
-			float4 _Noise_ST;
-			float4 _TextureSample0_ST;
-			float _Strength;
-			float _DistanceScaling;
-			float _TextureStrength;
-			float _ColorFresnel;
-			float _Emis;
+			float4 _Color0;
+			float _f;
+			float _Scroll;
+			float _MinAlpha;
 			#ifdef ASE_TESSELLATION
 				float _TessPhongStrength;
 				float _TessValue;
@@ -1293,9 +1452,29 @@ Shader "Glas"
 			#endif
 			CBUFFER_END
 
+			uniform float4 _CameraDepthTexture_TexelSize;
+			sampler2D _Noise;
+
+
+			float2 UnStereo( float2 UV )
+			{
+				#if UNITY_SINGLE_PASS_STEREO
+				float4 scaleOffset = unity_StereoScaleOffset[ unity_StereoEyeIndex ];
+				UV.xy = (UV.xy - scaleOffset.zw) / scaleOffset.xy;
+				#endif
+				return UV;
+			}
+			
+			float3 InvertDepthDirURP75_g1( float3 In )
+			{
+				float3 result = In;
+				#if !defined(ASE_SRP_VERSION) || ASE_SRP_VERSION <= 70301 || ASE_SRP_VERSION == 70503 || ASE_SRP_VERSION == 70600 || ASE_SRP_VERSION == 70700 || ASE_SRP_VERSION == 70701 || ASE_SRP_VERSION >= 80301
+				result *= float3(1,1,-1);
+				#endif
+				return result;
+			}
 			
 
-			
 			float4 _SelectionID;
 
 			struct SurfaceDescription
@@ -1313,7 +1492,16 @@ Shader "Glas"
 				UNITY_TRANSFER_INSTANCE_ID(v, o);
 				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
+				float4 ase_clipPos = TransformObjectToHClip((v.positionOS).xyz);
+				float4 screenPos = ComputeScreenPos(ase_clipPos);
+				o.ase_texcoord = screenPos;
+				float3 objectToViewPos = TransformWorldToView(TransformObjectToWorld(v.positionOS.xyz));
+				float eyeDepth = -objectToViewPos.z;
+				o.ase_texcoord1.x = eyeDepth;
 				
+				
+				//setting value to unused interpolator channels and avoid initialization warnings
+				o.ase_texcoord1.yzw = 0;
 
 				#ifdef ASE_ABSOLUTE_VERTEX_POS
 					float3 defaultVertexValue = v.positionOS.xyz;
@@ -1419,9 +1607,34 @@ Shader "Glas"
 			{
 				SurfaceDescription surfaceDescription = (SurfaceDescription)0;
 
+				float3 objToWorld12 = mul( GetObjectToWorldMatrix(), float4( float3( 0,0,0 ), 1 ) ).xyz;
+				float4 screenPos = IN.ase_texcoord;
+				float4 ase_screenPosNorm = screenPos / screenPos.w;
+				ase_screenPosNorm.z = ( UNITY_NEAR_CLIP_VALUE >= 0 ) ? ase_screenPosNorm.z : ase_screenPosNorm.z * 0.5 + 0.5;
+				float3 temp_output_76_0_g1 = ase_screenPosNorm.xyz;
+				float2 UV22_g3 = float4( temp_output_76_0_g1 , 0.0 ).xy;
+				float2 localUnStereo22_g3 = UnStereo( UV22_g3 );
+				float2 break64_g1 = localUnStereo22_g3;
+				float clampDepth69_g1 = SHADERGRAPH_SAMPLE_SCENE_DEPTH( float4( temp_output_76_0_g1 , 0.0 ).xy );
+				#ifdef UNITY_REVERSED_Z
+				float staticSwitch38_g1 = ( 1.0 - clampDepth69_g1 );
+				#else
+				float staticSwitch38_g1 = clampDepth69_g1;
+				#endif
+				float3 appendResult39_g1 = (float3(break64_g1.x , break64_g1.y , staticSwitch38_g1));
+				float4 appendResult42_g1 = (float4((appendResult39_g1*2.0 + -1.0) , 1.0));
+				float4 temp_output_43_0_g1 = mul( unity_CameraInvProjection, appendResult42_g1 );
+				float3 temp_output_46_0_g1 = ( (temp_output_43_0_g1).xyz / (temp_output_43_0_g1).w );
+				float3 In75_g1 = temp_output_46_0_g1;
+				float3 localInvertDepthDirURP75_g1 = InvertDepthDirURP75_g1( In75_g1 );
+				float4 appendResult49_g1 = (float4(localInvertDepthDirURP75_g1 , 1.0));
+				float mulTime28 = _TimeParameters.x * _Scroll;
+				float2 temp_cast_5 = (mulTime28).xx;
+				float temp_output_18_0 = saturate( ( ( 1.0 - ( distance( float4( objToWorld12 , 0.0 ) , mul( unity_CameraToWorld, appendResult49_g1 ) ) * _f ) ) * (_MinAlpha + (tex2D( _Noise, temp_cast_5 ).r - 0.0) * (1.0 - _MinAlpha) / (1.0 - 0.0)) ) );
+				float eyeDepth = IN.ase_texcoord1.x;
 				
 
-				surfaceDescription.Alpha = 1;
+				surfaceDescription.Alpha = ( ( _Color0.a * ( temp_output_18_0 * temp_output_18_0 * temp_output_18_0 * temp_output_18_0 ) ) * saturate( eyeDepth ) );
 				surfaceDescription.AlphaClipThreshold = 0.5;
 
 				#if _ALPHATEST_ON
@@ -1458,6 +1671,7 @@ Shader "Glas"
 			#define ASE_FOG 1
 			#define _SURFACE_TYPE_TRANSPARENT 1
 			#define ASE_SRP_VERSION 140008
+			#define REQUIRE_DEPTH_TEXTURE 1
 
 
 			#pragma vertex vert
@@ -1484,7 +1698,8 @@ Shader "Glas"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl"
             #endif
 
-			
+			#define ASE_NEEDS_VERT_POSITION
+
 
 			struct VertexInput
 			{
@@ -1498,20 +1713,17 @@ Shader "Glas"
 			{
 				float4 positionCS : SV_POSITION;
 				float3 normalWS : TEXCOORD0;
-				
+				float4 ase_texcoord1 : TEXCOORD1;
+				float4 ase_texcoord2 : TEXCOORD2;
 				UNITY_VERTEX_INPUT_INSTANCE_ID
 				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			CBUFFER_START(UnityPerMaterial)
-			float4 _Color;
-			float4 _Noise_ST;
-			float4 _TextureSample0_ST;
-			float _Strength;
-			float _DistanceScaling;
-			float _TextureStrength;
-			float _ColorFresnel;
-			float _Emis;
+			float4 _Color0;
+			float _f;
+			float _Scroll;
+			float _MinAlpha;
 			#ifdef ASE_TESSELLATION
 				float _TessPhongStrength;
 				float _TessValue;
@@ -1522,9 +1734,29 @@ Shader "Glas"
 			#endif
 			CBUFFER_END
 
+			uniform float4 _CameraDepthTexture_TexelSize;
+			sampler2D _Noise;
+
+
+			float2 UnStereo( float2 UV )
+			{
+				#if UNITY_SINGLE_PASS_STEREO
+				float4 scaleOffset = unity_StereoScaleOffset[ unity_StereoEyeIndex ];
+				UV.xy = (UV.xy - scaleOffset.zw) / scaleOffset.xy;
+				#endif
+				return UV;
+			}
+			
+			float3 InvertDepthDirURP75_g1( float3 In )
+			{
+				float3 result = In;
+				#if !defined(ASE_SRP_VERSION) || ASE_SRP_VERSION <= 70301 || ASE_SRP_VERSION == 70503 || ASE_SRP_VERSION == 70600 || ASE_SRP_VERSION == 70700 || ASE_SRP_VERSION == 70701 || ASE_SRP_VERSION >= 80301
+				result *= float3(1,1,-1);
+				#endif
+				return result;
+			}
 			
 
-			
 			struct SurfaceDescription
 			{
 				float Alpha;
@@ -1540,7 +1772,16 @@ Shader "Glas"
 				UNITY_TRANSFER_INSTANCE_ID(v, o);
 				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
+				float4 ase_clipPos = TransformObjectToHClip((v.positionOS).xyz);
+				float4 screenPos = ComputeScreenPos(ase_clipPos);
+				o.ase_texcoord1 = screenPos;
+				float3 objectToViewPos = TransformWorldToView(TransformObjectToWorld(v.positionOS.xyz));
+				float eyeDepth = -objectToViewPos.z;
+				o.ase_texcoord2.x = eyeDepth;
 				
+				
+				//setting value to unused interpolator channels and avoid initialization warnings
+				o.ase_texcoord2.yzw = 0;
 
 				#ifdef ASE_ABSOLUTE_VERTEX_POS
 					float3 defaultVertexValue = v.positionOS.xyz;
@@ -1655,9 +1896,34 @@ Shader "Glas"
 			{
 				SurfaceDescription surfaceDescription = (SurfaceDescription)0;
 
+				float3 objToWorld12 = mul( GetObjectToWorldMatrix(), float4( float3( 0,0,0 ), 1 ) ).xyz;
+				float4 screenPos = IN.ase_texcoord1;
+				float4 ase_screenPosNorm = screenPos / screenPos.w;
+				ase_screenPosNorm.z = ( UNITY_NEAR_CLIP_VALUE >= 0 ) ? ase_screenPosNorm.z : ase_screenPosNorm.z * 0.5 + 0.5;
+				float3 temp_output_76_0_g1 = ase_screenPosNorm.xyz;
+				float2 UV22_g3 = float4( temp_output_76_0_g1 , 0.0 ).xy;
+				float2 localUnStereo22_g3 = UnStereo( UV22_g3 );
+				float2 break64_g1 = localUnStereo22_g3;
+				float clampDepth69_g1 = SHADERGRAPH_SAMPLE_SCENE_DEPTH( float4( temp_output_76_0_g1 , 0.0 ).xy );
+				#ifdef UNITY_REVERSED_Z
+				float staticSwitch38_g1 = ( 1.0 - clampDepth69_g1 );
+				#else
+				float staticSwitch38_g1 = clampDepth69_g1;
+				#endif
+				float3 appendResult39_g1 = (float3(break64_g1.x , break64_g1.y , staticSwitch38_g1));
+				float4 appendResult42_g1 = (float4((appendResult39_g1*2.0 + -1.0) , 1.0));
+				float4 temp_output_43_0_g1 = mul( unity_CameraInvProjection, appendResult42_g1 );
+				float3 temp_output_46_0_g1 = ( (temp_output_43_0_g1).xyz / (temp_output_43_0_g1).w );
+				float3 In75_g1 = temp_output_46_0_g1;
+				float3 localInvertDepthDirURP75_g1 = InvertDepthDirURP75_g1( In75_g1 );
+				float4 appendResult49_g1 = (float4(localInvertDepthDirURP75_g1 , 1.0));
+				float mulTime28 = _TimeParameters.x * _Scroll;
+				float2 temp_cast_5 = (mulTime28).xx;
+				float temp_output_18_0 = saturate( ( ( 1.0 - ( distance( float4( objToWorld12 , 0.0 ) , mul( unity_CameraToWorld, appendResult49_g1 ) ) * _f ) ) * (_MinAlpha + (tex2D( _Noise, temp_cast_5 ).r - 0.0) * (1.0 - _MinAlpha) / (1.0 - 0.0)) ) );
+				float eyeDepth = IN.ase_texcoord2.x;
 				
 
-				surfaceDescription.Alpha = 1;
+				surfaceDescription.Alpha = ( ( _Color0.a * ( temp_output_18_0 * temp_output_18_0 * temp_output_18_0 * temp_output_18_0 ) ) * saturate( eyeDepth ) );
 				surfaceDescription.AlphaClipThreshold = 0.5;
 
 				#if _ALPHATEST_ON
@@ -1707,74 +1973,48 @@ Node;AmplifyShaderEditor.TemplateMultiPassMasterNode;6;0,0;Float;False;False;-1;
 Node;AmplifyShaderEditor.TemplateMultiPassMasterNode;7;0,0;Float;False;False;-1;2;UnityEditor.ShaderGraphUnlitGUI;0;13;New Amplify Shader;2992e84f91cbeb14eab234972e07ea9d;True;ScenePickingPass;0;7;ScenePickingPass;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;False;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;False;False;False;True;4;RenderPipeline=UniversalPipeline;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;UniversalMaterialType=Unlit;True;5;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;LightMode=Picking;False;False;0;;0;0;Standard;0;False;0
 Node;AmplifyShaderEditor.TemplateMultiPassMasterNode;8;0,0;Float;False;False;-1;2;UnityEditor.ShaderGraphUnlitGUI;0;13;New Amplify Shader;2992e84f91cbeb14eab234972e07ea9d;True;DepthNormals;0;8;DepthNormals;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;False;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;False;False;False;True;4;RenderPipeline=UniversalPipeline;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;UniversalMaterialType=Unlit;True;5;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;False;;True;3;False;;False;True;1;LightMode=DepthNormalsOnly;False;False;0;;0;0;Standard;0;False;0
 Node;AmplifyShaderEditor.TemplateMultiPassMasterNode;9;0,0;Float;False;False;-1;2;UnityEditor.ShaderGraphUnlitGUI;0;13;New Amplify Shader;2992e84f91cbeb14eab234972e07ea9d;True;DepthNormalsOnly;0;9;DepthNormalsOnly;0;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;False;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;False;False;False;True;4;RenderPipeline=UniversalPipeline;RenderType=Opaque=RenderType;Queue=Geometry=Queue=0;UniversalMaterialType=Unlit;True;5;True;12;all;0;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;1;False;;True;3;False;;False;True;1;LightMode=DepthNormalsOnly;False;True;9;d3d11;metal;vulkan;xboxone;xboxseries;playstation;ps4;ps5;switch;0;;0;0;Standard;0;False;0
-Node;AmplifyShaderEditor.SimpleMultiplyOpNode;26;-225.2225,21.94424;Inherit;False;2;2;0;COLOR;0,0,0,0;False;1;COLOR;0,0,0,0;False;1;COLOR;0
-Node;AmplifyShaderEditor.SamplerNode;28;-922.265,267.5478;Inherit;True;Property;_TextureSample0;Texture Sample 0;2;0;Create;True;0;0;0;False;0;False;-1;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;5;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
-Node;AmplifyShaderEditor.LerpOp;29;-423.265,358.5478;Inherit;False;3;0;COLOR;0,0,0,0;False;1;COLOR;0,0,0,0;False;2;FLOAT;0;False;1;COLOR;0
-Node;AmplifyShaderEditor.RangedFloatNode;30;-743.265,477.5478;Inherit;False;Constant;_Float0;Float 0;3;0;Create;True;0;0;0;False;0;False;1;0;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.RangedFloatNode;31;-742.265,601.5478;Inherit;False;Property;_TextureStrength;TextureStrength;3;0;Create;True;0;0;0;False;0;False;1;1;0;1;0;1;FLOAT;0
-Node;AmplifyShaderEditor.SimpleMultiplyOpNode;32;411.4805,-95.09138;Inherit;False;2;2;0;COLOR;0,0,0,0;False;1;COLOR;0,0,0,0;False;1;COLOR;0
-Node;AmplifyShaderEditor.LerpOp;39;37.28452,-105.1318;Inherit;False;3;0;COLOR;0,0,0,0;False;1;COLOR;0,0,0,0;False;2;FLOAT;0;False;1;COLOR;0
-Node;AmplifyShaderEditor.ScreenColorNode;10;-634.2961,-50.89621;Inherit;False;Global;_GrabScreen0;Grab Screen 0;0;0;Create;True;0;0;0;False;0;False;Object;-1;False;False;False;False;2;0;FLOAT2;0,0;False;1;FLOAT;0;False;5;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
-Node;AmplifyShaderEditor.NegateNode;25;-2325.872,307.9648;Inherit;False;1;0;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.SamplerNode;22;-2526.618,-86.76906;Inherit;True;Property;_Noise;Noise;0;0;Create;True;0;0;0;False;0;False;-1;None;None;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;5;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
-Node;AmplifyShaderEditor.RangedFloatNode;24;-2922.873,258.9648;Inherit;False;Property;_Strength;Strength;1;0;Create;True;0;0;0;False;0;False;0.01;0;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.SimpleMultiplyOpNode;34;-2683.429,265.4237;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.ScreenDepthNode;35;-3441.83,493.7238;Inherit;False;0;True;1;0;FLOAT4;0,0,0,0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.GrabScreenPosition;12;-2004.144,-380.3412;Inherit;False;0;0;5;FLOAT4;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
-Node;AmplifyShaderEditor.FunctionNode;40;-1590.252,62.12487;Inherit;False;DepthMaskedRefraction;-1;;1;c805f061214177c42bca056464193f81;2,40,0,103,0;2;35;FLOAT3;0,0,0;False;37;FLOAT;0.02;False;1;FLOAT2;38
-Node;AmplifyShaderEditor.SimpleAddOpNode;21;-1642.917,-242.0431;Inherit;False;2;2;0;FLOAT4;0,0,0,0;False;1;FLOAT;0;False;1;FLOAT4;0
-Node;AmplifyShaderEditor.RangedFloatNode;41;-1770.824,205.5615;Inherit;False;Constant;_Float3;Float 3;5;0;Create;True;0;0;0;False;0;False;5;0;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.TFHCRemapNode;23;-2047.492,-36.45262;Inherit;False;5;0;FLOAT;0;False;1;FLOAT;0;False;2;FLOAT;1;False;3;FLOAT;-0.01;False;4;FLOAT;0.01;False;1;FLOAT;0
-Node;AmplifyShaderEditor.SimpleMultiplyOpNode;44;1030.588,96.72388;Inherit;False;2;2;0;COLOR;0,0,0,0;False;1;FLOAT;0;False;1;COLOR;0
-Node;AmplifyShaderEditor.RangedFloatNode;45;812.5884,189.7239;Inherit;False;Property;_Emis;Emis;5;0;Create;True;0;0;0;False;0;False;1;1;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.SaturateNode;38;-3413.582,750.1075;Inherit;False;1;0;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.TFHCRemapNode;37;-3667.833,750.428;Inherit;False;5;0;FLOAT;0;False;1;FLOAT;0;False;2;FLOAT;25;False;3;FLOAT;1;False;4;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.SurfaceDepthNode;36;-4109.233,692.228;Inherit;False;0;1;0;FLOAT3;0,0,0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.LerpOp;48;-3136.131,855.9896;Inherit;False;3;0;FLOAT;0;False;1;FLOAT;0;False;2;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.RangedFloatNode;50;-3390.131,1091.99;Inherit;False;Property;_DistanceScaling;DistanceScaling;6;0;Create;True;0;0;0;False;0;False;1;1;0;1;0;1;FLOAT;0
-Node;AmplifyShaderEditor.RangedFloatNode;49;-3382.131,909.9896;Inherit;False;Constant;_Float4;Float 4;6;0;Create;True;0;0;0;False;0;False;1;0;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.TemplateMultiPassMasterNode;1;1726.743,14.22848;Float;False;True;-1;2;UnityEditor.ShaderGraphUnlitGUI;0;13;Glas;2992e84f91cbeb14eab234972e07ea9d;True;Forward;0;1;Forward;8;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;False;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;False;False;False;True;4;RenderPipeline=UniversalPipeline;RenderType=Transparent=RenderType;Queue=Transparent=Queue=0;UniversalMaterialType=Unlit;True;5;True;12;all;0;False;True;1;5;False;;10;False;;1;1;False;;10;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;2;False;;True;3;False;;True;True;0;False;;0;False;;True;1;LightMode=UniversalForwardOnly;False;False;0;;0;0;Standard;22;Surface;1;638441205533750909;  Blend;0;0;Two Sided;1;0;Forward Only;0;0;Cast Shadows;1;0;  Use Shadow Threshold;0;0;GPU Instancing;1;0;LOD CrossFade;1;0;Built-in Fog;1;0;DOTS Instancing;0;0;Meta Pass;0;0;Extra Pre Pass;0;0;Tessellation;0;0;  Phong;0;0;  Strength;0.5,False,;0;  Type;0;0;  Tess;16,False,;0;  Min;10,False,;0;  Max;25,False,;0;  Edge Length;16,False,;0;  Max Displacement;25,False,;0;Vertex Position,InvertActionOnDeselection;1;0;0;10;False;True;True;True;False;False;True;True;True;False;False;;False;0
-Node;AmplifyShaderEditor.ColorNode;33;-1758.968,-1587.494;Inherit;False;Property;_Color;Color;4;0;Create;True;0;0;0;False;0;False;1,1,1,0;0,0,0,0;True;0;5;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
-Node;AmplifyShaderEditor.SimpleMultiplyOpNode;51;-1054.739,-893.5467;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.LerpOp;53;-1671.905,-1169.684;Inherit;False;3;0;FLOAT;0;False;1;FLOAT;0;False;2;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.RangedFloatNode;55;-2091.905,-1005.684;Inherit;False;Property;_ColorFresnel;ColorFresnel;7;0;Create;True;0;0;0;False;0;False;0;1;0;1;0;1;FLOAT;0
-Node;AmplifyShaderEditor.RangedFloatNode;54;-1916.905,-1382.684;Inherit;False;Constant;_Float5;Float 5;7;0;Create;True;0;0;0;False;0;False;1;0;0;0;0;1;FLOAT;0
-Node;AmplifyShaderEditor.SaturateNode;56;-1925.409,-1201.268;Inherit;False;1;0;FLOAT;0;False;1;FLOAT;0
-Node;AmplifyShaderEditor.FresnelNode;52;-2198.905,-1238.684;Inherit;False;Standard;WorldNormal;ViewDir;False;False;5;0;FLOAT3;0,0,1;False;4;FLOAT3;0,0,0;False;1;FLOAT;0;False;2;FLOAT;1;False;3;FLOAT;5;False;1;FLOAT;0
-WireConnection;26;0;10;0
-WireConnection;26;1;29;0
-WireConnection;29;0;30;0
-WireConnection;29;1;28;0
-WireConnection;29;2;31;0
-WireConnection;32;0;33;0
-WireConnection;32;1;39;0
-WireConnection;39;0;26;0
-WireConnection;39;1;33;0
-WireConnection;39;2;51;0
-WireConnection;10;0;40;38
-WireConnection;25;0;34;0
-WireConnection;34;0;24;0
-WireConnection;34;1;48;0
-WireConnection;40;35;23;0
-WireConnection;40;37;41;0
-WireConnection;21;0;12;0
-WireConnection;21;1;23;0
-WireConnection;23;0;22;1
-WireConnection;23;3;25;0
-WireConnection;23;4;34;0
-WireConnection;44;0;32;0
-WireConnection;44;1;45;0
-WireConnection;38;0;37;0
-WireConnection;37;0;36;0
-WireConnection;48;0;49;0
-WireConnection;48;1;38;0
-WireConnection;48;2;50;0
-WireConnection;1;2;44;0
-WireConnection;51;0;33;4
-WireConnection;51;1;53;0
-WireConnection;53;0;54;0
-WireConnection;53;1;56;0
-WireConnection;53;2;55;0
-WireConnection;56;0;52;0
+Node;AmplifyShaderEditor.SaturateNode;18;50,126.5;Inherit;False;1;0;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.SimpleMultiplyOpNode;20;353,127.5;Inherit;False;4;4;0;FLOAT;0;False;1;FLOAT;0;False;2;FLOAT;0;False;3;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.ColorNode;21;-92,-360.5;Inherit;False;Property;_Color0;Color 0;1;1;[HDR];Create;True;0;0;0;False;0;False;0,0,0,0;1.498039,0.3747862,0,1;True;0;5;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
+Node;AmplifyShaderEditor.SimpleMultiplyOpNode;22;552,6.5;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.TemplateMultiPassMasterNode;1;1323.895,-3.653907;Float;False;True;-1;2;UnityEditor.ShaderGraphUnlitGUI;0;13;FakeLight;2992e84f91cbeb14eab234972e07ea9d;True;Forward;0;1;Forward;8;False;False;False;False;False;False;False;False;False;False;False;False;True;0;False;;False;True;0;False;;False;False;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;False;False;False;True;4;RenderPipeline=UniversalPipeline;RenderType=Transparent=RenderType;Queue=Transparent=Queue=0;UniversalMaterialType=Unlit;True;5;True;12;all;0;False;True;1;5;False;;10;False;;1;1;False;;10;False;;False;False;False;False;False;False;False;False;False;False;False;False;False;False;True;True;True;True;True;0;False;;False;False;False;False;False;False;False;True;False;0;False;;255;False;;255;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;0;False;;False;True;2;False;;True;3;False;;True;True;0;False;;0;False;;True;1;LightMode=UniversalForwardOnly;False;False;0;;0;0;Standard;22;Surface;1;638497571931159511;  Blend;0;0;Two Sided;1;0;Forward Only;0;0;Cast Shadows;1;0;  Use Shadow Threshold;0;0;GPU Instancing;1;0;LOD CrossFade;1;0;Built-in Fog;1;0;DOTS Instancing;0;0;Meta Pass;0;0;Extra Pre Pass;0;0;Tessellation;0;0;  Phong;0;0;  Strength;0.5,False,;0;  Type;0;0;  Tess;16,False,;0;  Min;10,False,;0;  Max;25,False,;0;  Edge Length;16,False,;0;  Max Displacement;25,False,;0;Vertex Position,InvertActionOnDeselection;1;0;0;10;False;True;True;True;False;False;True;True;True;False;False;;False;0
+Node;AmplifyShaderEditor.SimpleMultiplyOpNode;24;793.5624,200.2814;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.SurfaceDepthNode;23;207.0557,385.9909;Inherit;False;0;1;0;FLOAT3;0,0,0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.SaturateNode;25;551.1956,404.8768;Inherit;False;1;0;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.SimpleMultiplyOpNode;26;-193.6461,159.1418;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.RangedFloatNode;33;-1825.761,511.1458;Inherit;False;Property;_Scroll;Scroll;3;0;Create;True;0;0;0;False;0;False;10;1;0;0;0;1;FLOAT;0
+Node;AmplifyShaderEditor.SimpleTimeNode;28;-1569.546,514.3419;Inherit;False;1;0;FLOAT;50;False;1;FLOAT;0
+Node;AmplifyShaderEditor.SamplerNode;31;-1335.998,486.4017;Inherit;True;Property;_Noise;Noise;2;0;Create;True;0;0;0;False;0;False;-1;None;82a8d5f38e2ccf44c86362214b2d3e5e;True;0;False;white;Auto;False;Object;-1;Auto;Texture2D;8;0;SAMPLER2D;;False;1;FLOAT2;0,0;False;2;FLOAT;0;False;3;FLOAT2;0,0;False;4;FLOAT2;0,0;False;5;FLOAT;1;False;6;FLOAT;0;False;7;SAMPLERSTATE;;False;5;COLOR;0;FLOAT;1;FLOAT;2;FLOAT;3;FLOAT;4
+Node;AmplifyShaderEditor.TFHCRemapNode;30;-599.6461,503.1418;Inherit;False;5;0;FLOAT;0;False;1;FLOAT;0;False;2;FLOAT;1;False;3;FLOAT;0.9;False;4;FLOAT;1;False;1;FLOAT;0
+Node;AmplifyShaderEditor.RangedFloatNode;34;-1361.761,788.1458;Inherit;False;Property;_MinAlpha;MinAlpha;4;0;Create;True;0;0;0;False;0;False;1;0.5;0;1;0;1;FLOAT;0
+Node;AmplifyShaderEditor.OneMinusNode;17;-363,68.5;Inherit;False;1;0;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.DistanceOpNode;11;-1021,12.5;Inherit;False;2;0;FLOAT3;0,0,0;False;1;FLOAT4;0,0,0,0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.FunctionNode;10;-1482,153.5;Inherit;False;Reconstruct World Position From Depth;-1;;1;e7094bcbcc80eb140b2a3dbe6a861de8;0;1;76;FLOAT3;0,0,0;False;1;FLOAT4;0
+Node;AmplifyShaderEditor.TransformPositionNode;12;-1347,-53.5;Inherit;False;Object;World;False;Fast;True;1;0;FLOAT3;0,0,0;False;4;FLOAT3;0;FLOAT;1;FLOAT;2;FLOAT;3
+Node;AmplifyShaderEditor.SimpleMultiplyOpNode;16;-742,30.5;Inherit;False;2;2;0;FLOAT;0;False;1;FLOAT;0;False;1;FLOAT;0
+Node;AmplifyShaderEditor.RangedFloatNode;19;-963,201.5;Inherit;False;Property;_f;f;0;0;Create;True;0;0;0;False;0;False;0;0.22;0;0;0;1;FLOAT;0
+WireConnection;18;0;26;0
+WireConnection;20;0;18;0
+WireConnection;20;1;18;0
+WireConnection;20;2;18;0
+WireConnection;20;3;18;0
+WireConnection;22;0;21;4
+WireConnection;22;1;20;0
+WireConnection;1;2;21;0
+WireConnection;1;3;24;0
+WireConnection;24;0;22;0
+WireConnection;24;1;25;0
+WireConnection;25;0;23;0
+WireConnection;26;0;17;0
+WireConnection;26;1;30;0
+WireConnection;28;0;33;0
+WireConnection;31;1;28;0
+WireConnection;30;0;31;1
+WireConnection;30;3;34;0
+WireConnection;17;0;16;0
+WireConnection;11;0;12;0
+WireConnection;11;1;10;0
+WireConnection;16;0;11;0
+WireConnection;16;1;19;0
 ASEEND*/
-//CHKSM=8D85E75386E8285A62DCF7001D305CCD0F6DC1CB
+//CHKSM=82A0B4C09C0C7B72F85A5132CBE2AF335EA9BF14

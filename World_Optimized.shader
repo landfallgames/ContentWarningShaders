@@ -27,6 +27,8 @@ Shader "World Optimized"
 		_LightStepMax("LightStepMax", Float) = 1
 		_TextureLightInflu("TextureLightInflu", Range( 0 , 1)) = 0.5
 		_Ambient("Ambient", Float) = 1
+		_VertexColorFactor("Vertex Color Factor", Range( 0 , 1)) = 1
+
 
 
 		//_TessPhongStrength( "Tess Phong Strength", Range( 0, 1 ) ) = 0.5
@@ -275,6 +277,7 @@ Shader "World Optimized"
 			float4 _Color;
 			float3 _Tiling_World;
 			float _Ambient;
+			float _VertexColorFactor;
 			float _LightStepMin;
 			float _LightStepMax;
 			float _UVScale;
@@ -549,7 +552,10 @@ Shader "World Optimized"
 				float2 normalizedScreenPosFlat = (screenPosNorm).xy;
 				float3 worldNormal = IN.worldNormal.xyz;
 
-				float4 lightingInfo = float4(AdditionalLightsHalfLambertMask14x( WorldPosition , normalizedScreenPosFlat , worldNormal , 0 ), 0) * IN.ase_color;;
+				float3 vertexColor = lerp(1, IN.ase_color, _VertexColorFactor);
+
+				
+				float4 lightingInfo = float4(AdditionalLightsHalfLambertMask14x( WorldPosition , normalizedScreenPosFlat , worldNormal , 0 ), 0) * float4(vertexColor.xxx, 1);
 				float3 hsvTorgb99 = RGBToHSV( lightingInfo.rgb );
 				float sceneDepth = LinearEyeDepth(SHADERGRAPH_SAMPLE_SCENE_DEPTH( screenPosNorm.xy ),_ZBufferParams);
 
@@ -613,8 +619,9 @@ Shader "World Optimized"
 				#else
 				float alpha = 1.0;
 				#endif
+
 				
-				float3 Color = ( finalColor * ( IN.ase_color * IN.ase_color ) ).rgb;
+				float3 Color = ( finalColor * ( vertexColor * vertexColor ) ).rgb;
 				float Alpha = alpha;
 				float AlphaClipThreshold = 0.1;
 
